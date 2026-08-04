@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 from questions import questions
 from scoring import calculate_mbti
-from results import build_result_embed
+from results import build_personality_card_embed, build_result_embed
 
 load_dotenv()
 
@@ -240,9 +240,10 @@ class QuestionView(discord.ui.View):
 
 @bot.group(invoke_without_command=True)
 async def mbti(ctx):
-    await ctx.send("Use `!mbti test` to start the MBTI quiz or `!mbti compare @user` to compare results.")
+    await ctx.send("Use `!mbti test` to start the MBTI quiz.")
+    
 
-
+#MBTI command to start the quiz
 @mbti.command(name="test")
 async def mbti_test(ctx):
     answers = []
@@ -295,7 +296,7 @@ async def mbti_compare(ctx, member: discord.Member):
     await ctx.send(embed=embed)
 
 
-#MBTI command to view server MBTI statistics
+#MBTI command to view server's MBTI statistics
 @mbti.command(name="stats")
 async def mbti_stats(ctx):
     if ctx.guild is None:
@@ -308,5 +309,22 @@ async def mbti_stats(ctx):
 
     await ctx.send(embed=embed)
 
+
 #MBTI command to view personality card
+@mbti.command(name="card")
+async def mbti_card(ctx, mbti_type: str = None):
+    if mbti_type is None:
+        if ctx.guild is None:
+            await ctx.send("MBTI cards are only available in a server unless you pass a type like `!mbti card INTJ`.")
+            return
+
+        mbti_type = get_server_member_mbti(ctx.guild.id, ctx.author.id)
+
+        if mbti_type is None:
+            await ctx.send("You need to finish `!mbti test` first so I can build your personality card.")
+            return
+
+    embed = build_personality_card_embed(mbti_type)
+    await ctx.send(embed=embed)
+
 bot.run(TOKEN)
