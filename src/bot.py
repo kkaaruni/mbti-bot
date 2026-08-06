@@ -56,6 +56,124 @@ def get_server_member_mbti(guild_id, user_id):
     guild_stats = stats.get(str(guild_id), {})
     return guild_stats.get(str(user_id))
 
+
+def build_server_average_profile(results):
+    if not results:
+        return None, None
+
+    dimension_counts = {
+        "E": 0,
+        "I": 0,
+        "N": 0,
+        "S": 0,
+        "T": 0,
+        "F": 0,
+        "J": 0,
+        "P": 0,
+    }
+
+    for mbti in results.values():
+        for letter in mbti:
+            dimension_counts[letter] += 1
+
+    profile_letters = []
+    percentages = {}
+
+    for first, second in [("E", "I"), ("N", "S"), ("T", "F"), ("J", "P")]:
+        first_score = dimension_counts[first]
+        second_score = dimension_counts[second]
+        total = first_score + second_score
+
+        if total == 0:
+            first_percent = 50
+        else:
+            first_percent = round((first_score / total) * 100)
+
+        second_percent = 100 - first_percent
+        percentages[first] = first_percent
+        percentages[second] = second_percent
+
+        profile_letters.append(first if first_score >= second_score else second)
+
+    return "".join(profile_letters), percentages
+
+
+def get_profile_similarity(current_percentages, other_percentages):
+    matched_dimensions = 0
+
+    for first, second in [("E", "I"), ("N", "S"), ("T", "F"), ("J", "P")]:
+        current_lead = first if current_percentages[first] >= current_percentages[second] else second
+        other_lead = first if other_percentages[first] >= other_percentages[second] else second
+
+        if current_lead == other_lead:
+            matched_dimensions += 1
+
+    return round((matched_dimensions / 4) * 100)
+
+
+def get_most_common_mbti(results):
+    if not results:
+        return None, 0
+
+    counts = Counter(results.values()) if isinstance(results, dict) else results
+    if not counts:
+        return None, 0
+
+    mbti, count = counts.most_common(1)[0]
+    total = sum(counts.values())
+    percent = round((count / total) * 100) if total else 0
+    return mbti, percent
+
+
+def build_global_stats_embed(guild_name, current_profile, current_percentages, global_percentages, current_most_common, current_percent, global_most_common, global_percent, comparisons):
+    embed = discord.Embed(
+        title=f"{guild_name}'s MBTI Comparison",
+        description="How your server compares to other servers.",
+        color=discord.Color.purple()
+    )
+
+    if current_profile is None:
+        embed.description = "This server does not have enough recorded MBTI results yet."
+        return embed
+
+    embed.add_field(
+        name=f"{guild_name}'s most common",
+        value=f"**{current_most_common}** ({current_percent}%)",
+        inline=True
+    )
+    embed.add_field(
+        name="Global's most common",
+        value=f"**{global_most_common}** ({global_percent}%)",
+        inline=True
+    )
+
+    comparison_lines = []
+    labels = [("I", "Introverted"), ("N", "Intuitive"), ("T", "Thinking"), ("J", "Judging")]
+    for dimension, label in labels:
+        current_value = current_percentages[dimension]
+        global_value = global_percentages[dimension]
+        if current_value > global_value:
+            comparison_lines.append(f"⬆ More {label}")
+        else:
+            comparison_lines.append(f"⬇ Less {label}")
+
+    embed.add_field(
+        name="Your server is",
+        value="\n".join(comparison_lines),
+        inline=False
+    )
+
+    if not comparisons:
+        embed.add_field(name="Closest servers", value="No other servers have enough recorded data yet.", inline=False)
+        return embed
+
+    lines = []
+    for server_name, profile, similarity in comparisons[:5]:
+        lines.append(f"{server_name}: **{profile}** ({similarity}% similar)")
+
+    embed.add_field(name="Closest servers", value="\n".join(lines), inline=False)
+    return embed
+
 #Assign MBTI role to user in server
 async def assign_mbti_role(guild, member, mbti):
     role_name = mbti.upper()
@@ -269,7 +387,7 @@ class QuestionView(discord.ui.View):
 
 @bot.group(invoke_without_command=True)
 async def mbti(ctx):
-    await ctx.send("Use `!mbti test` to start the MBTI quiz.")
+    await ctx.send("Use `!mbti test` to start the MBTI quiz!")
     
 
 #MBTI command to start the quiz
@@ -336,6 +454,68 @@ async def mbti_stats(ctx):
     guild_results = stats.get(str(ctx.guild.id), {})
     embed = build_server_stats_embed(ctx.guild.name, guild_results)
 
+    await ctx.send(embed=embed)
+
+#MBTI command to view global MBTI statistics
+@mbti.command(name="global")
+async def mbti_global(ctx):
+    if ctx.guild is None:
+        await ctx.send("Global MBTI comparison is only available in a server.")
+        return
+
+    stats = load_server_stats()
+    current_results = stats.get(str(ctx.guild.id), {})
+    current_profile, current_percentages = build_server_average_profile(current_results)
+
+    if current_profile is None:
+        await ctx.send("This server does not have enough recorded MBTI results yet.")
+        return
+
+    flattened_global_results = {}
+    global_counts = Counter()
+    for server_id, server_results in stats.items():
+        if isinstance(server_results, dict):
+            for user_id, mbti in server_results.items():
+                flattened_global_results[f"{server_id}:{user_id}"] = mbti
+                global_counts[mbti] += 1
+
+    global_profile, global_percentages = build_server_average_profile(flattened_global_results)
+    global_most_common, global_percent = get_most_common_mbti(global_counts)
+    current_most_common, current_percent = get_most_common_mbti(current_results)
+
+    comparisons = []
+
+    for server_id, server_results in stats.items():
+        if server_id == str(ctx.guild.id):
+            continue
+
+        if not isinstance(server_results, dict):
+            continue
+
+        if len(server_results) < 2:
+            continue
+
+        other_profile, other_percentages = build_server_average_profile(server_results)
+        if other_profile is None or other_percentages is None:
+            continue
+
+        similarity = get_profile_similarity(current_percentages, other_percentages)
+        guild_name = ctx.bot.get_guild(int(server_id))
+        server_name = guild_name.name if guild_name is not None else f"Server {server_id}"
+        comparisons.append((server_name, other_profile, similarity))
+
+    comparisons.sort(key=lambda item: item[2], reverse=True)
+    embed = build_global_stats_embed(
+        ctx.guild.name,
+        current_profile,
+        current_percentages,
+        global_percentages,
+        current_most_common,
+        current_percent,
+        global_most_common,
+        global_percent,
+        comparisons,
+    )
     await ctx.send(embed=embed)
 
 
