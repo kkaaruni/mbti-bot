@@ -15,9 +15,11 @@ load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 STATS_FILE = Path(__file__).resolve().parent.parent / "data" / "server_mbti_stats.json"
+MBTI_TYPES = {"INTJ", "INTP", "ENTJ", "ENTP", "INFJ", "INFP", "ENFJ", "ENFP", "ISTJ", "ISFJ", "ESTJ", "ESFJ", "ISTP", "ISFP", "ESTP", "ESFP"}
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True
 
 bot = commands.Bot(
     command_prefix="!",
@@ -53,6 +55,32 @@ def get_server_member_mbti(guild_id, user_id):
     stats = load_server_stats()
     guild_stats = stats.get(str(guild_id), {})
     return guild_stats.get(str(user_id))
+
+#Assign MBTI role to user in server
+async def assign_mbti_role(guild, member, mbti):
+    role_name = mbti.upper()
+    existing_role = discord.utils.get(guild.roles, name=role_name)
+
+    if existing_role is None:
+        if not guild.me.guild_permissions.manage_roles:
+            return False
+        existing_role = await guild.create_role(name=role_name, colour=discord.Colour.blurple())
+
+    for role in member.roles:
+        if role.name.upper() in MBTI_TYPES:
+            try:
+                await member.remove_roles(role)
+            except discord.Forbidden:
+                pass
+
+    if existing_role not in member.roles:
+        try:
+            await member.add_roles(existing_role)
+            return True
+        except discord.Forbidden:
+            return False
+
+    return True
 
 
 def build_server_stats_embed(guild_name, results):
@@ -216,6 +244,7 @@ class QuestionView(discord.ui.View):
         mbti, scores = calculate_mbti(self.answers, self.question_list)
         if self.ctx.guild is not None:
             record_server_mbti(self.ctx.guild.id, interaction.user.id, mbti)
+            await assign_mbti_role(self.ctx.guild, interaction.user, mbti)
         embed = build_result_embed(mbti, scores)
 
         await interaction.response.edit_message(
