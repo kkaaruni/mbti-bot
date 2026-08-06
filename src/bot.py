@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 from questions import questions
 from scoring import calculate_mbti
-from results import build_personality_card_embed, build_result_embed
+from results import build_personality_card_embed, build_personality_results_embed, build_result_embed
 
 load_dotenv()
 
@@ -516,6 +516,37 @@ async def mbti_global(ctx):
         global_percent,
         comparisons,
     )
+    await ctx.send(embed=embed)
+
+
+@mbti.command(name="results")
+async def mbti_results(ctx):
+    if ctx.guild is None:
+        await ctx.send("Your personality results are only available in a server.")
+        return
+
+    member_mbti = get_server_member_mbti(ctx.guild.id, ctx.author.id)
+    if member_mbti is None:
+        await ctx.send("You need to finish `!mbti test` first so I can build your personality results.")
+        return
+
+    stats = load_server_stats()
+    flattened_global_results = {}
+    global_counts = Counter()
+
+    for server_results in stats.values():
+        if not isinstance(server_results, dict):
+            continue
+
+        for user_id, mbti in server_results.items():
+            if not isinstance(mbti, str):
+                continue
+
+            global_counts[mbti] += 1
+            flattened_global_results[str(len(flattened_global_results))] = mbti
+
+    _, global_percentages = build_server_average_profile(flattened_global_results)
+    embed = build_personality_results_embed(member_mbti, global_percentages, global_counts)
     await ctx.send(embed=embed)
 
 

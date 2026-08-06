@@ -196,12 +196,12 @@ def build_personality_card_embed(mbti):
             color=discord.Color.red()
         )
 
-    traits = "\n".join(f"🔹 {trait}" for trait in card["traits"])
-    strengths = "\n".join(f"✓ {strength}" for strength in card["strengths"])
-    growth = "\n".join(f"• {area}" for area in card["growth"])
+    traits = "\n".join(f":herb: {trait}" for trait in card["traits"])
+    strengths = "\n".join(f":tulip: {strength}" for strength in card["strengths"])
+    growth = "\n".join(f":wilted_rose: {area}" for area in card["growth"])
 
     embed = discord.Embed(
-        title=f"Your MBTI: {mbti.upper()}",
+        title=f"Your MBTI: :sparkles:{mbti.upper()}:sparkles:",
         description=f'"{card["name"]}"',
         color=card["color"]
     )
@@ -209,4 +209,38 @@ def build_personality_card_embed(mbti):
     embed.add_field(name="Strengths", value=strengths, inline=False)
     embed.add_field(name="Growth areas", value=growth, inline=False)
     embed.set_footer(text="MBTI personality card")
+    return embed
+
+
+def build_personality_results_embed(mbti, dimension_percentages, global_counts):
+    normalized_mbti = mbti.upper()
+    total_users = sum(global_counts.values())
+    type_count = global_counts.get(normalized_mbti, 0)
+    other_users = max(type_count - 1, 0)
+
+    ranked_types = sorted(global_counts.items(), key=lambda item: (-item[1], item[0]))
+    rank = next((index + 1 for index, (name, _) in enumerate(ranked_types) if name == normalized_mbti), None)
+
+    if rank is not None and rank <= 3:
+        frequency_note = "You’re in the top 3 most common personalities."
+    elif rank is not None and rank >= max(1, len(ranked_types) - 2):
+        frequency_note = "You’re one of the rarest personalities."
+    else:
+        frequency_note = f"Only {other_users} other {normalized_mbti} users share this type."
+
+    embed = discord.Embed(
+        title="Your Personality",
+        description=f"**{normalized_mbti}**",
+        color=discord.Color.blurple()
+    )
+    embed.add_field(
+        name="Type frequency",
+        value=f"Only {type_count} users share this type out of {total_users} recorded users.",
+        inline=False,
+    )
+    embed.add_field(
+        name="Summary",
+        value=frequency_note,
+        inline=False,
+    )
     return embed
