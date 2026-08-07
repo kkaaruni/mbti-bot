@@ -310,12 +310,7 @@ class QuestionView(discord.ui.View):
 
     def _build_buttons(self):
         for value in range(1, 11):
-            if value <= 3:
-                style = discord.ButtonStyle.primary
-            elif value <= 7:
-                style = discord.ButtonStyle.primary
-            else:
-                style = discord.ButtonStyle.primary
+            style = discord.ButtonStyle.primary
 
             button = discord.ui.Button(
                 label=str(value),
@@ -387,7 +382,51 @@ class QuestionView(discord.ui.View):
 
 @bot.group(invoke_without_command=True)
 async def mbti(ctx):
-    await ctx.send("Use `!mbti test` to start the MBTI quiz!")
+    embed = discord.Embed(
+        title="MBTI Personality Bot",
+        description="Welcome! Here's everything you can do:",
+        color=discord.Color.blurple()
+    )
+
+    embed.add_field(
+        name="🎯 `!mbti test`",
+        value="Take the 20-question personality quiz and discover your MBTI type.",
+        inline=False
+    )
+
+    embed.add_field(
+        name="📊 `!mbti stats`",
+        value="View the MBTI distribution and most common personality type in this server.",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🌍 `!mbti global`",
+        value="Compare your server's personality profile with all other servers using the bot.",
+        inline=False
+    )
+
+    embed.add_field(
+        name="👥 `!mbti compare @user`",
+        value="Compare your MBTI type with another member and see your compatibility.",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🪪 `!mbti card`",
+        value="View your personalised MBTI personality card.",
+        inline=False
+    )
+
+    embed.add_field(
+        name="📈 `!mbti results`",
+        value="See a detailed breakdown of your personality traits and how you compare globally.",
+        inline=False
+    )
+
+    embed.set_footer(text="Answer each question honestly for the most accurate result!")
+
+    await ctx.send(embed=embed)
     
 
 #MBTI command to start the quiz
@@ -396,8 +435,8 @@ async def mbti_test(ctx):
     answers = []
 
     initial_embed = discord.Embed(
-        title="MBTI Personality Test",
-        description="Answer each question by choosing a number from 1 to 10.",
+        title="MBTI Personality Quiz",
+        description="For each statement, choose a number from 1 to 10.",
         color=discord.Color.blurple()
     )
     initial_embed.add_field(
