@@ -121,15 +121,7 @@ Please provide enough information to identify the relevant record, such as your 
 
 Once the relevant record has been identified, reasonable efforts will be made to remove it from the Bot's database.
 
-## 9. Children's Privacy
-
-The Bot is not specifically designed to collect information from children.
-
-The Bot does not intentionally collect age information.
-
-If you believe that personal information has been provided to the Bot by a child and should be removed, please contact the developer.
-
-## 10. Third-Party Services
+## 9. Third-Party Services
 
 The Bot operates through Discord and may be hosted using third-party infrastructure providers.
 
@@ -139,7 +131,7 @@ Your use of Discord remains subject to Discord's own privacy policy and terms.
 
 The developer does not control the privacy practices of third-party services.
 
-## 11. Data Security
+## 10. Data Security
 
 Reasonable measures are taken to protect stored information from unauthorised access, alteration, or disclosure.
 
@@ -147,7 +139,7 @@ However, no online service or storage system can guarantee absolute security.
 
 Users should understand that use of the Bot involves transmitting information through Discord and other infrastructure required to operate the service.
 
-## 12. Changes to This Privacy Policy
+## 11. Changes to This Privacy Policy
 
 This Privacy Policy may be updated as the Bot's features or data practices change.
 
@@ -155,11 +147,11 @@ The "Last Updated" date will be changed when significant updates are made.
 
 Users are encouraged to review this Privacy Policy periodically.
 
-## 13. Contact
+## 12. Contact
 
 If you have questions about this Privacy Policy, want to request removal of your data, or have concerns about how your information is handled, please contact the Bot's developer through the contact method provided in the project's GitHub repository.
 
-## 14. Acceptance
+## 13. Acceptance
 
 By using the MBTI Discord Bot, you acknowledge that you have read and understood this Privacy Policy.
 
