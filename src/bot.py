@@ -1,4 +1,3 @@
-import json
 import os
 from collections import Counter
 from pathlib import Path
@@ -7,14 +6,18 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
+from database.db import (
+    get_server_member_mbti,
+    load_server_stats,
+    record_server_mbti,
+)
 from questions import questions
 from scoring import calculate_mbti
 from results import build_personality_card_embed, build_personality_results_embed, build_result_embed
 
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env", override=True)
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-STATS_FILE = Path(__file__).resolve().parent.parent / "data" / "server_mbti_stats.json"
 MBTI_TYPES = {"INTJ", "INTP", "ENTJ", "ENTP", "INFJ", "INFP", "ENFJ", "ENFP", "ISTJ", "ISFJ", "ESTJ", "ESFJ", "ISTP", "ISFP", "ESTP", "ESFP"}
 
 intents = discord.Intents.default()
@@ -25,36 +28,6 @@ bot = commands.Bot(
     command_prefix="!",
     intents=intents
 )
-
-
-def load_server_stats():
-    if not STATS_FILE.exists():
-        return {}
-
-    try:
-        with STATS_FILE.open("r", encoding="utf-8") as file_handle:
-            return json.load(file_handle)
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-def save_server_stats(stats):
-    STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with STATS_FILE.open("w", encoding="utf-8") as file_handle:
-        json.dump(stats, file_handle, indent=2, sort_keys=True)
-
-
-def record_server_mbti(guild_id, user_id, mbti):
-    stats = load_server_stats()
-    guild_stats = stats.setdefault(str(guild_id), {})
-    guild_stats[str(user_id)] = mbti
-    save_server_stats(stats)
-
-
-def get_server_member_mbti(guild_id, user_id):
-    stats = load_server_stats()
-    guild_stats = stats.get(str(guild_id), {})
-    return guild_stats.get(str(user_id))
 
 
 def build_server_average_profile(results):
@@ -115,13 +88,18 @@ def get_most_common_mbti(results):
     if not results:
         return None, 0
 
-    counts = Counter(results.values()) if isinstance(results, dict) else results
-    if not counts:
+    if isinstance(results, Counter):
+        counts = results
+    elif isinstance(results, dict):
+        counts = Counter(results.values())
+    else:
         return None, 0
 
     mbti, count = counts.most_common(1)[0]
     total = sum(counts.values())
-    percent = round((count / total) * 100) if total else 0
+
+    percent = round((count / total) * 100)
+
     return mbti, percent
 
 
@@ -188,14 +166,14 @@ async def assign_mbti_role(guild, member, mbti):
         if role.name.upper() in MBTI_TYPES:
             try:
                 await member.remove_roles(role)
-            except discord.Forbidden:
+            except (discord.Forbidden, discord.HTTPException):
                 pass
 
     if existing_role not in member.roles:
         try:
             await member.add_roles(existing_role)
             return True
-        except discord.Forbidden:
+        except (discord.Forbidden, discord.HTTPException):
             return False
 
     return True
@@ -513,10 +491,19 @@ async def mbti_global(ctx):
     flattened_global_results = {}
     global_counts = Counter()
     for server_id, server_results in stats.items():
-        if isinstance(server_results, dict):
-            for user_id, mbti in server_results.items():
-                flattened_global_results[f"{server_id}:{user_id}"] = mbti
-                global_counts[mbti] += 1
+        if not isinstance(server_results, dict):
+            continue
+
+        for user_id, mbti in server_results.items():
+            if not isinstance(mbti, str):
+                continue
+
+            normalized_mbti = mbti.upper()
+            if normalized_mbti not in MBTI_TYPES:
+                continue
+
+            flattened_global_results[f"{server_id}:{user_id}"] = normalized_mbti
+            global_counts[normalized_mbti] += 1
 
     global_profile, global_percentages = build_server_average_profile(flattened_global_results)
     global_most_common, global_percent = get_most_common_mbti(global_counts)
@@ -531,10 +518,21 @@ async def mbti_global(ctx):
         if not isinstance(server_results, dict):
             continue
 
-        if len(server_results) < 2:
+        valid_results = {}
+        for user_id, mbti in server_results.items():
+            if not isinstance(mbti, str):
+                continue
+
+            normalized_mbti = mbti.upper()
+            if normalized_mbti not in MBTI_TYPES:
+                continue
+
+            valid_results[user_id] = normalized_mbti
+
+        if len(valid_results) < 2:
             continue
 
-        other_profile, other_percentages = build_server_average_profile(server_results)
+        other_profile, other_percentages = build_server_average_profile(valid_results)
         if other_profile is None or other_percentages is None:
             continue
 
@@ -578,7 +576,7 @@ async def mbti_results(ctx):
             continue
 
         for user_id, mbti in server_results.items():
-            if not isinstance(mbti, str):
+            if not isinstance(mbti, str) or mbti.upper() not in MBTI_TYPES:
                 continue
 
             global_counts[mbti] += 1
@@ -606,4 +604,5 @@ async def mbti_card(ctx, mbti_type: str = None):
     embed = build_personality_card_embed(mbti_type)
     await ctx.send(embed=embed)
 
-bot.run(TOKEN)
+if __name__ == "__main__":
+    bot.run(TOKEN)
