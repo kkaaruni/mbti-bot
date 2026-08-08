@@ -1,4 +1,3 @@
-import json
 import os
 from collections import Counter
 from pathlib import Path
@@ -7,17 +6,23 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
+from database.db import (
+    get_server_member_mbti,
+    load_server_stats,
+    record_server_mbti,
+)
 from questions import questions
 from scoring import calculate_mbti
-from results import build_result_embed
+from results import build_personality_card_embed, build_personality_results_embed, build_result_embed
 
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env", override=True)
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-STATS_FILE = Path(__file__).resolve().parent.parent / "data" / "server_mbti_stats.json"
+MBTI_TYPES = {"INTJ", "INTP", "ENTJ", "ENTP", "INFJ", "INFP", "ENFJ", "ENFP", "ISTJ", "ISFJ", "ESTJ", "ESFJ", "ISTP", "ISFP", "ESTP", "ESFP"}
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True
 
 bot = commands.Bot(
     command_prefix="!",
@@ -25,34 +30,153 @@ bot = commands.Bot(
 )
 
 
-def load_server_stats():
-    if not STATS_FILE.exists():
-        return {}
+def build_server_average_profile(results):
+    if not results:
+        return None, None
 
-    try:
-        with STATS_FILE.open("r", encoding="utf-8") as file_handle:
-            return json.load(file_handle)
-    except (json.JSONDecodeError, OSError):
-        return {}
+    dimension_counts = {
+        "E": 0,
+        "I": 0,
+        "N": 0,
+        "S": 0,
+        "T": 0,
+        "F": 0,
+        "J": 0,
+        "P": 0,
+    }
+
+    for mbti in results.values():
+        for letter in mbti:
+            dimension_counts[letter] += 1
+
+    profile_letters = []
+    percentages = {}
+
+    for first, second in [("E", "I"), ("N", "S"), ("T", "F"), ("J", "P")]:
+        first_score = dimension_counts[first]
+        second_score = dimension_counts[second]
+        total = first_score + second_score
+
+        if total == 0:
+            first_percent = 50
+        else:
+            first_percent = round((first_score / total) * 100)
+
+        second_percent = 100 - first_percent
+        percentages[first] = first_percent
+        percentages[second] = second_percent
+
+        profile_letters.append(first if first_score >= second_score else second)
+
+    return "".join(profile_letters), percentages
 
 
-def save_server_stats(stats):
-    STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with STATS_FILE.open("w", encoding="utf-8") as file_handle:
-        json.dump(stats, file_handle, indent=2, sort_keys=True)
+def get_profile_similarity(current_percentages, other_percentages):
+    matched_dimensions = 0
+
+    for first, second in [("E", "I"), ("N", "S"), ("T", "F"), ("J", "P")]:
+        current_lead = first if current_percentages[first] >= current_percentages[second] else second
+        other_lead = first if other_percentages[first] >= other_percentages[second] else second
+
+        if current_lead == other_lead:
+            matched_dimensions += 1
+
+    return round((matched_dimensions / 4) * 100)
 
 
-def record_server_mbti(guild_id, user_id, mbti):
-    stats = load_server_stats()
-    guild_stats = stats.setdefault(str(guild_id), {})
-    guild_stats[str(user_id)] = mbti
-    save_server_stats(stats)
+def get_most_common_mbti(results):
+    if not results:
+        return None, 0
+
+    if isinstance(results, Counter):
+        counts = results
+    elif isinstance(results, dict):
+        counts = Counter(results.values())
+    else:
+        return None, 0
+
+    mbti, count = counts.most_common(1)[0]
+    total = sum(counts.values())
+
+    percent = round((count / total) * 100)
+
+    return mbti, percent
 
 
-def get_server_member_mbti(guild_id, user_id):
-    stats = load_server_stats()
-    guild_stats = stats.get(str(guild_id), {})
-    return guild_stats.get(str(user_id))
+def build_global_stats_embed(guild_name, current_profile, current_percentages, global_percentages, current_most_common, current_percent, global_most_common, global_percent, comparisons):
+    embed = discord.Embed(
+        title=f"{guild_name}'s MBTI Comparison",
+        description="How your server compares to other servers.",
+        color=discord.Color.purple()
+    )
+
+    if current_profile is None:
+        embed.description = "This server does not have enough recorded MBTI results yet."
+        return embed
+
+    embed.add_field(
+        name=f"{guild_name}'s most common",
+        value=f"**{current_most_common}** ({current_percent}%)",
+        inline=True
+    )
+    embed.add_field(
+        name="Global's most common",
+        value=f"**{global_most_common}** ({global_percent}%)",
+        inline=True
+    )
+
+    comparison_lines = []
+    labels = [("I", "Introverted"), ("N", "Intuitive"), ("T", "Thinking"), ("J", "Judging")]
+    for dimension, label in labels:
+        current_value = current_percentages[dimension]
+        global_value = global_percentages[dimension]
+        if current_value > global_value:
+            comparison_lines.append(f"⬆ More {label}")
+        else:
+            comparison_lines.append(f"⬇ Less {label}")
+
+    embed.add_field(
+        name="Your server is",
+        value="\n".join(comparison_lines),
+        inline=False
+    )
+
+    if not comparisons:
+        embed.add_field(name="Closest servers", value="No other servers have enough recorded data yet.", inline=False)
+        return embed
+
+    lines = []
+    for server_name, profile, similarity in comparisons[:5]:
+        lines.append(f"{server_name}: **{profile}** ({similarity}% similar)")
+
+    embed.add_field(name="Closest servers", value="\n".join(lines), inline=False)
+    return embed
+
+#Assign MBTI role to user in server
+async def assign_mbti_role(guild, member, mbti):
+    role_name = mbti.upper()
+    existing_role = discord.utils.get(guild.roles, name=role_name)
+
+    if existing_role is None:
+        if not guild.me.guild_permissions.manage_roles:
+            return False
+        existing_role = await guild.create_role(name=role_name, colour=discord.Colour.blurple())
+
+    for role in member.roles:
+        if role.name.upper() in MBTI_TYPES:
+            try:
+                await member.remove_roles(role)
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+    if existing_role not in member.roles:
+        try:
+            await member.add_roles(existing_role)
+            return True
+        except (discord.Forbidden, discord.HTTPException):
+            return False
+
+    return True
 
 
 def build_server_stats_embed(guild_name, results):
@@ -164,12 +288,7 @@ class QuestionView(discord.ui.View):
 
     def _build_buttons(self):
         for value in range(1, 11):
-            if value <= 3:
-                style = discord.ButtonStyle.primary
-            elif value <= 7:
-                style = discord.ButtonStyle.primary
-            else:
-                style = discord.ButtonStyle.primary
+            style = discord.ButtonStyle.primary
 
             button = discord.ui.Button(
                 label=str(value),
@@ -216,6 +335,7 @@ class QuestionView(discord.ui.View):
         mbti, scores = calculate_mbti(self.answers, self.question_list)
         if self.ctx.guild is not None:
             record_server_mbti(self.ctx.guild.id, interaction.user.id, mbti)
+            await assign_mbti_role(self.ctx.guild, interaction.user, mbti)
         embed = build_result_embed(mbti, scores)
 
         await interaction.response.edit_message(
@@ -240,16 +360,61 @@ class QuestionView(discord.ui.View):
 
 @bot.group(invoke_without_command=True)
 async def mbti(ctx):
-    await ctx.send("Use `!mbti test` to start the MBTI quiz or `!mbti compare @user` to compare results.")
+    embed = discord.Embed(
+        title="MBTI Personality Bot",
+        description="Welcome! Here's everything you can do:",
+        color=discord.Color.blurple()
+    )
 
+    embed.add_field(
+        name="🎯 `!mbti test`",
+        value="Take the 20-question personality quiz and discover your MBTI type.",
+        inline=False
+    )
 
+    embed.add_field(
+        name="📊 `!mbti stats`",
+        value="View the MBTI distribution and most common personality type in this server.",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🌍 `!mbti global`",
+        value="Compare your server's personality profile with all other servers using the bot.",
+        inline=False
+    )
+
+    embed.add_field(
+        name="👥 `!mbti compare @user`",
+        value="Compare your MBTI type with another member and see your compatibility.",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🪪 `!mbti card`",
+        value="View your personalised MBTI personality card.",
+        inline=False
+    )
+
+    embed.add_field(
+        name="📈 `!mbti results`",
+        value="See a detailed breakdown of your personality traits and how you compare globally.",
+        inline=False
+    )
+
+    embed.set_footer(text="Answer each question honestly for the most accurate result!")
+
+    await ctx.send(embed=embed)
+    
+
+#MBTI command to start the quiz
 @mbti.command(name="test")
 async def mbti_test(ctx):
     answers = []
 
     initial_embed = discord.Embed(
-        title="MBTI Personality Test",
-        description="Answer each question by choosing a number from 1 to 10.",
+        title="MBTI Personality Quiz",
+        description="For each statement, choose a number from 1 to 10.",
         color=discord.Color.blurple()
     )
     initial_embed.add_field(
@@ -295,7 +460,7 @@ async def mbti_compare(ctx, member: discord.Member):
     await ctx.send(embed=embed)
 
 
-#MBTI command to view server MBTI statistics
+#MBTI command to view server's MBTI statistics
 @mbti.command(name="stats")
 async def mbti_stats(ctx):
     if ctx.guild is None:
@@ -308,5 +473,136 @@ async def mbti_stats(ctx):
 
     await ctx.send(embed=embed)
 
+#MBTI command to view global MBTI statistics
+@mbti.command(name="global")
+async def mbti_global(ctx):
+    if ctx.guild is None:
+        await ctx.send("Global MBTI comparison is only available in a server.")
+        return
+
+    stats = load_server_stats()
+    current_results = stats.get(str(ctx.guild.id), {})
+    current_profile, current_percentages = build_server_average_profile(current_results)
+
+    if current_profile is None:
+        await ctx.send("This server does not have enough recorded MBTI results yet.")
+        return
+
+    flattened_global_results = {}
+    global_counts = Counter()
+    for server_id, server_results in stats.items():
+        if not isinstance(server_results, dict):
+            continue
+
+        for user_id, mbti in server_results.items():
+            if not isinstance(mbti, str):
+                continue
+
+            normalized_mbti = mbti.upper()
+            if normalized_mbti not in MBTI_TYPES:
+                continue
+
+            flattened_global_results[f"{server_id}:{user_id}"] = normalized_mbti
+            global_counts[normalized_mbti] += 1
+
+    global_profile, global_percentages = build_server_average_profile(flattened_global_results)
+    global_most_common, global_percent = get_most_common_mbti(global_counts)
+    current_most_common, current_percent = get_most_common_mbti(current_results)
+
+    comparisons = []
+
+    for server_id, server_results in stats.items():
+        if server_id == str(ctx.guild.id):
+            continue
+
+        if not isinstance(server_results, dict):
+            continue
+
+        valid_results = {}
+        for user_id, mbti in server_results.items():
+            if not isinstance(mbti, str):
+                continue
+
+            normalized_mbti = mbti.upper()
+            if normalized_mbti not in MBTI_TYPES:
+                continue
+
+            valid_results[user_id] = normalized_mbti
+
+        if len(valid_results) < 2:
+            continue
+
+        other_profile, other_percentages = build_server_average_profile(valid_results)
+        if other_profile is None or other_percentages is None:
+            continue
+
+        similarity = get_profile_similarity(current_percentages, other_percentages)
+        guild_name = ctx.bot.get_guild(int(server_id))
+        server_name = guild_name.name if guild_name is not None else f"Server {server_id}"
+        comparisons.append((server_name, other_profile, similarity))
+
+    comparisons.sort(key=lambda item: item[2], reverse=True)
+    embed = build_global_stats_embed(
+        ctx.guild.name,
+        current_profile,
+        current_percentages,
+        global_percentages,
+        current_most_common,
+        current_percent,
+        global_most_common,
+        global_percent,
+        comparisons,
+    )
+    await ctx.send(embed=embed)
+
+
+@mbti.command(name="results")
+async def mbti_results(ctx):
+    if ctx.guild is None:
+        await ctx.send("Your personality results are only available in a server.")
+        return
+
+    member_mbti = get_server_member_mbti(ctx.guild.id, ctx.author.id)
+    if member_mbti is None:
+        await ctx.send("You need to finish `!mbti test` first so I can build your personality results.")
+        return
+
+    stats = load_server_stats()
+    flattened_global_results = {}
+    global_counts = Counter()
+
+    for server_results in stats.values():
+        if not isinstance(server_results, dict):
+            continue
+
+        for user_id, mbti in server_results.items():
+            if not isinstance(mbti, str) or mbti.upper() not in MBTI_TYPES:
+                continue
+
+            global_counts[mbti] += 1
+            flattened_global_results[str(len(flattened_global_results))] = mbti
+
+    _, global_percentages = build_server_average_profile(flattened_global_results)
+    embed = build_personality_results_embed(member_mbti, global_percentages, global_counts)
+    await ctx.send(embed=embed)
+
+
 #MBTI command to view personality card
-bot.run(TOKEN)
+@mbti.command(name="card")
+async def mbti_card(ctx, mbti_type: str = None):
+    if mbti_type is None:
+        if ctx.guild is None:
+            await ctx.send("MBTI cards are only available in a server unless you pass a type like `!mbti card INTJ`.")
+            return
+
+        mbti_type = get_server_member_mbti(ctx.guild.id, ctx.author.id)
+
+        if mbti_type is None:
+            await ctx.send("You need to finish `!mbti test` first so I can build your personality card.")
+            return
+
+    embed = build_personality_card_embed(mbti_type)
+    await ctx.send(embed=embed)
+
+if __name__ == "__main__":
+    bot.run(TOKEN)
